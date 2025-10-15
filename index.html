@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dodge the Blocks</title>
+<style>
+  body { margin:0; overflow:hidden; background:#222; color:#eee; font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align:center;}
+  #menu, #difficultyMenu, #gameover, #demonIntro, #signin {position:fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.95); display:flex; flex-direction:column; justify-content:center; align-items:center; font-size:28px; color:#eee; z-index:5; transition:opacity 1s;}
+  button {padding:10px 20px; background:#888; border:none; color:#eee; font-size:16px; cursor:pointer; margin:10px;}
+  button:hover {background:#aaa;}
+  #player {position:absolute; width:30px; height:30px; background:#00ff00; transform:translate(-50%, -50%); z-index:2;}
+  .block {position:absolute; width:30px; height:30px; background:#ff4d4d; z-index:2;}
+  #score, #timer, #globalMessage, #leaderboard {font-size:20px; margin:10px; position:relative; z-index:3;}
+  input {padding:8px; font-size:16px;}
+</style>
+</head>
+<body>
+
+<div id="signin">
+  <h2>Sign in to play Demon Mode</h2>
+  <input id="email" placeholder="Email"><br>
+  <input id="password" type="password" placeholder="Password"><br>
+  <button onclick="signIn()">Sign In</button>
+  <button onclick="signUp()">Sign Up</button>
+  <div id="signinMessage"></div>
+</div>
+
+<div id="menu" style="display:none;">
+  <h1>Dodge the Blocks</h1>
+  <button onclick="showDifficultyMenu()">Play</button>
+</div>
+
+<div id="difficultyMenu" style="display:none;">
+  <h2>Select Difficulty</h2>
+  <button onclick="startGame(500)">Easy (2/sec)</button>
+  <button onclick="startGame(250)">Medium (4/sec)</button>
+  <button onclick="startGame(143)">Hard (7/sec)</button>
+  <button onclick="startDemonMode()">Demon (15/sec)</button>
+</div>
+
+<div id="demonIntro" style="display:none; opacity:1;">
+  <h2>Survive for 30 seconds, and you will get a prize</h2>
+</div>
+
+<div id="score">Score: 0</div>
+<div id="timer">Time: 0s</div>
+<div id="globalMessage"></div>
+<div id="leaderboard"><h3>Leaderboard (Nothing Yet)</h3><ul id="leaderboardList"></ul></div>
+<div id="player"></div>
+
+<div id="gameover" style="display:none;">
+  <div id="final"></div>
+  <button onclick="retryGame()">Retry</button>
+  <button onclick="backToMenu()">Back to Menu</button>
+</div>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<script>
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  databaseURL: "YOUR_DATABASE_URL",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.database();
+
+// Elements
+const player = document.getElementById("player");
+const scoreEl = document.getElementById("score");
+const timerEl = document.getElementById("timer");
+const globalMsgEl = document.getElementById("globalMessage");
+const leaderboardList = document.getElementById("leaderboardList");
+const gameoverEl = document.getElementById("gameover");
+const finalEl = document.getElementById("final");
+const menu = document.getElementById("menu");
+const difficultyMenu = document.getElementById("difficultyMenu");
+const demonIntro = document.getElementById("demonIntro");
+const signinDiv = document.getElementById("signin");
+const signinMessage = document.getElementById("signinMessage");
+
+let playerX = window.innerWidth/2;
+let playerY = window.innerHeight-50;
+const speed = 5;
+const keys = {};
+let blocks = [];
+let score = 0;
+let blockInterval;
+let gameRunning = false;
+let lastDifficultyInterval = 500;
+let startTime;
+let timerInterval;
+let currentUser = null;
+
+window.addEventListener('keydown', e => { keys[e.key]=true; });
+window.addEventListener('keyup', e => { keys[e.key]=false; });
+
+// Auth functions
+function signIn(){
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  auth.signInWithEmailAndPassword(email, password)
+    .then(userCredential => {
+      currentUser = userCredential.user;
+      signinDiv.style.display = 'none';
+      menu.style.display = 'flex';
+    })
+    .catch(err=>signinMessage.textContent=err.message);
+}
+function signUp(){
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  auth.createUserWithEmailAndPassword(email, password)
+    .then(userCredential => {
+      currentUser = userCredential.user;
+      signinDiv.style.display = 'none';
+      menu.style.display = 'flex';
+    })
+    .catch(err=>signinMessage.textContent=err.message);
+}
+
+// Global Demon completion listener
+db.ref('demonCompleted').on('value', snapshot => {
+  if(snapshot.val()){
+    globalMsgEl.textContent = 'Someone in the world has completed Demon Mode!';
+  } else { globalMsgEl.textContent = ''; }
+});
+
+// Leaderboard listener
+db.ref('leaderboard').on('value', snapshot=>{
+  leaderboardList.innerHTML='';
+  const data = snapshot.val();
+  if(data){
+    const sorted = Object.values(data).sort((a,b)=>b.time-a.time);
+    sorted.forEach(p=>{
+      const li = document.createElement('li');
+      li.textContent = p.user+": "+p.time+"s";
+      leaderboardList.appendChild(li);
+    });
+  }
+});
+
+function showDifficultyMenu(){ menu.style.display='none'; difficultyMenu.style.display='flex'; }
+
+function startGame(intervalTime){ lastDifficultyInterval=intervalTime; difficultyMenu.style.display='none'; initializeGame(intervalTime); }
+
+function startDemonMode(){
+  lastDifficultyInterval=66;
+  if(!currentUser){ alert("Sign in to play Demon Mode"); return; }
+  difficultyMenu.style.display='none';
+  demonIntro.style.display='flex';
+  setTimeout(()=>{
+    demonIntro.style.opacity=0;
+    setTimeout(()=>{ demonIntro.style.display='none'; initializeGame(66,true); },1000);
+  },2000);
+}
+
+function initializeGame(intervalTime,isDemon=false){
+  score=0; scoreEl.textContent='Score: 0';
+  playerX=window.innerWidth/2; playerY=window.innerHeight-50;
+  blocks.forEach(b=>b.el.remove()); blocks=[];
+  gameRunning=true;
+  startTime=Date.now();
+  blockInterval=setInterval(spawnBlock,intervalTime);
+  if(isDemon){ timerInterval=setInterval(()=>{ checkDemonTime(); },100); }
+  else{ timerEl.textContent='Time: 0s'; }
+  requestAnimationFrame(gameLoop);
+}
+
+function checkDemonTime(){
+  const elapsed=Math.floor((Date.now()-startTime)/1000);
+  timerEl.textContent='Time: '+elapsed+'s';
+  if(elapsed>=30){
+    clearInterval(timerInterval); gameRunning=false; clearInterval(blockInterval);
+    finalEl.textContent='Congratulations, wait for your prize'; gameoverEl.style.display='flex';
+    blocks.forEach(b=>b.el.style.zIndex=1);
+    db.ref('demonCompleted').set(true);
+    if(currentUser){
+      db.ref('leaderboard/'+currentUser.uid).set({user:currentUser.email,time:elapsed});
+    }
+  }
+}
+
+function retryGame(){ gameoverEl.style.display='none'; initializeGame(lastDifficultyInterval); }
+function backToMenu(){ gameoverEl.style.display='none'; menu.style.display='flex'; }
+
+function spawnBlock(){
+  if(!gameRunning) return;
+  const block=document.createElement("div"); block.classList.add("block");
+  const side=Math.floor(Math.random()*4); let x,y,vx,vy;
+  switch(side){
+    case 0: x=Math.random()*(window.innerWidth-30); y=-30; vx=(Math.random()-0.5)*2; vy=3+Math.random()*2; break;
+    case 1: x=window.innerWidth+30; y=Math.random()*(window.innerHeight-30); vx=-(3+Math.random()*2); vy=(Math.random()-0.5)*2; break;
+    case 2: x=Math.random()*(window.innerWidth-30); y=window.innerHeight+30; vx=(Math.random()-0.5)*2; vy=-(3+Math.random()*2); break;
+    case 3: x=-30; y=Math.random()*(window.innerHeight-30); vx=3+Math.random()*2; vy=(Math.random()-0.5)*2; break;
+  }
+  block.style.left=x+'px'; block.style.top=y+'px';
+  document.body.appendChild(block);
+  blocks.push({el:block,x,y,vx,vy});
+}
+
+function update(){
+  if(!gameRunning) return;
+  if(keys['ArrowLeft']||keys['a']) playerX-=speed;
+  if(keys['ArrowRight']||keys['d']) playerX+=speed;
+  if(keys['ArrowUp']||keys['w']) playerY-=speed;
+  if(keys['ArrowDown']||keys['s']) playerY+=speed;
+
+  playerX=Math.max(15,Math.min(window.innerWidth-15,playerX));
+  playerY=Math.max(15,Math.min(window.innerHeight-15,playerY));
+  player.style.left=playerX+'px'; player.style.top=playerY+'px';
+
+  blocks.forEach((b,i)=>{
+    b.x+=b.vx; b.y+=b.vy; b.el.style.left=b.x+'px'; b.el.style.top=b.y+'px';
+    if(b.x<playerX+15 && b.x+30>playerX-15 && b.y<playerY+15 && b.y+30>playerY-15) endGame();
+    if(b.x<-40||b.x>window.innerWidth+40||b.y<-40||b.y>window.innerHeight+40){
+      b.el.remove(); blocks.splice(i,1); score++; scoreEl.textContent='Score: '+score;
+    }
+  });
+}
+
+function gameLoop(){ if(gameRunning){ update(); requestAnimationFrame(gameLoop); } }
+function endGame(){ gameRunning=false; clearInterval(blockInterval); gameoverEl.style.display='flex'; finalEl.textContent='Game Over! Score: '+score; blocks.forEach(b=>b.el.style.zIndex=1); }
+
+</script>
+</body>
+</html>
