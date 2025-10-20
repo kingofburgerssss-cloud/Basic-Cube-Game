@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>geometry dash — wave hell mode</title>
+  <title>Wave</title>
   <style>
     html,body{height:100%;margin:0;background:#0b1220;overflow:hidden}
     canvas{display:block;background:#07101a}
@@ -27,6 +27,7 @@ let holding=false;
 let upPressed=false;
 let dead=false;
 let deathTimer=0;
+let deathAnim=0;
 let invincible=0;
 
 const trail=[];
@@ -34,7 +35,6 @@ const maxTrailLength = 200;
 const obstacles=[];
 const circleRadius = 60;
 
-// generate dense, scattered obstacles
 for(let i=0;i<200;i++){
   obstacles.push({
     x: i * 180 + Math.random() * 100,
@@ -47,7 +47,8 @@ function resetGame(){
   wave={x:300,y:canvas.height/2,radius:18,vy:0,thrust:-3.2,gravity:2.5,angle:0,speed:5};
   trail.length=0;
   dead=false;
-  invincible=2; // 2 seconds of invincibility after respawn
+  deathAnim=0;
+  invincible=2;
 }
 
 function startHold(){holding=true;}
@@ -81,6 +82,7 @@ function checkCollision(){
 function update(){
   if(dead){
     deathTimer -= 1/60;
+    deathAnim += 1;
     if(deathTimer <= 0) resetGame();
     return;
   }
@@ -90,37 +92,31 @@ function update(){
   wave.x += wave.speed;
   if(holding || upPressed){
     wave.y += wave.thrust;
-    wave.angle = -Math.PI/4;
   } else {
     wave.y += wave.gravity;
-    wave.angle = Math.PI/4;
   }
 
-  // keep inside bounds
   if(wave.y < wave.radius) wave.y = wave.radius;
   if(wave.y > canvas.height - wave.radius) wave.y = canvas.height - wave.radius;
 
   if(checkCollision()){
     dead=true;
     deathTimer=3;
+    deathAnim=0;
   }
 
   trail.push({x: wave.x, y: wave.y});
   if(trail.length > maxTrailLength) trail.shift();
 }
 
-function drawWave(x,y,r,a){
-  ctx.save();
-  ctx.translate(x,y);
-  ctx.rotate(a);
+function drawWave(x,y,r){
   ctx.beginPath();
-  ctx.moveTo(r,0);
-  ctx.lineTo(-r*0.8,-r*0.7);
-  ctx.lineTo(-r*0.8,r*0.7);
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x-r, y-r*0.6);
+  ctx.lineTo(x-r, y+r*0.6);
   ctx.closePath();
   ctx.fillStyle= dead ? '#ff0000' : (invincible>0 ? 'rgba(126,252,255,0.5)' : '#7efcff');
   ctx.fill();
-  ctx.restore();
 }
 
 function drawCircle(obs){
@@ -131,10 +127,12 @@ function drawCircle(obs){
 }
 
 function renderDeath(){
+  const pulse = Math.sin(deathAnim*0.3)*0.5+0.5;
+  const radius = 80 + deathAnim*2;
   ctx.save();
-  ctx.fillStyle='rgba(255,0,0,0.7)';
+  ctx.fillStyle=`rgba(255,0,0,${0.6*pulse})`;
   ctx.beginPath();
-  ctx.arc(wave.x,wave.y,100,0,Math.PI*2);
+  ctx.arc(wave.x,wave.y,radius,0,Math.PI*2);
   ctx.fill();
   ctx.restore();
 }
@@ -154,7 +152,6 @@ function render(){
   for(let i=0;i<trail.length;i++){
     ctx.save();
     ctx.translate(trail[i].x, trail[i].y);
-    ctx.rotate(Math.PI/4);
     ctx.fillStyle='rgba(126,252,255,0.5)';
     const size = wave.radius*1.4;
     ctx.fillRect(-size/2, -size/2, size, size);
@@ -162,7 +159,7 @@ function render(){
   }
 
   if(dead) renderDeath();
-  drawWave(wave.x,wave.y,wave.radius,wave.angle);
+  drawWave(wave.x,wave.y,wave.radius);
   ctx.restore();
 }
 
